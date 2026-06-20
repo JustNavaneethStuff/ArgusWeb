@@ -1,0 +1,37 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  - job_name: argus-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+
+  - job_name: argus-scheduler
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["scheduler:8000"]
+
+  - job_name: argus-crawler
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["crawler:9091"]
+
+  - job_name: argus-parser
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["parser:9091"]
+
+  - job_name: argus-cleaner
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["cleaner:9091"]
