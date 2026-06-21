@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 import time
 
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from aiokafka import AIOKafkaProducer
 from playwright.async_api import Browser, async_playwright
 
-from argus_core.proxy import NoOpProxyRotator
-from argus_core.rate_limit import NoOpRateLimiter
+from argus_core.content_hash import ContentHashStore
+from argus_core.database import create_session_factory
+from argus_core.factories import build_proxy_rotator, build_rate_limiter, build_retry_strategy
 from argus_core.redis_client import UrlDedupStore, create_redis
-from argus_core.retry import ExponentialBackoffRetry
 from argus_core.robots import RobotsChecker
 from argus_core.settings import get_settings
 from argus_core.storage import HtmlStorage, create_minio_client
@@ -24,9 +24,16 @@ from argus_events.kafka_client import (
 from argus_events.schemas import HtmlFetched, UrlDiscovered, UrlFailed
 from argus_events.topics import HTML_FETCHED, URL_DISCOVERED, URL_FAILED
 from argus_observability.logging import configure_logging, get_logger
-from argus_observability.metrics import crawl_duration_seconds, kafka_messages_total, urls_crawled_total
-from argus_observability.worker_metrics import start_metrics_server
+from argus_observability.metrics import (
+    crawl_duration_seconds,
+    kafka_messages_total,
+    rate_limit_waits_total,
+    urls_crawled_total,
+    urls_failed_total,
+    urls_unchanged_total,
+)
 from argus_observability.tracing import configure_tracing, get_tracer
+from argus_observability.worker_metrics import start_metrics_server
 
 logger = get_logger(__name__)
 
@@ -35,9 +42,7 @@ class CrawlerWorker:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.robots = RobotsChecker(self.settings)
-        self.rate_limiter = NoOpRateLimiter()
-        self.proxy_rotator = NoOpProxyRotator()
-        self.retry_strategy = ExponentialBackoffRetry()
+        self.retry_strategy = build_retry_strategy(self.settings)
         self._browser: Browser | None = None
         self._semaphore = asyncio.Semaphore(self.settings.crawler_concurrency)
         self._tracer = get_tracer("argus.crawler")
@@ -49,6 +54,10 @@ class CrawlerWorker:
 
         self.redis = await create_redis(self.settings)
         self.dedup = UrlDedupStore(self.redis)
+        self.rate_limiter = build_rate_limiter(self.settings, self.redis)
+        self.proxy_rotator = build_proxy_rotator(self.settings)
+        self.session_factory = create_session_factory(self.settings)
+        self.content_hashes = ContentHashStore(self.session_factory, self.redis)
         self.storage = HtmlStorage(create_minio_client(self.settings), self.settings.minio_bucket)
         self.producer = await create_producer(self.settings.kafka_bootstrap_servers)
         self.consumer = await create_consumer(
@@ -78,13 +87,18 @@ class CrawlerWorker:
 
     async def _handle(self, event: UrlDiscovered) -> None:
         h = url_hash(event.normalized_url)
-        if not await self.dedup.try_claim(h):
+        if event.force_recrawl:
+            await self.dedup.release(h)
+        elif not await self.dedup.try_claim(h, ttl_seconds=self.settings.incremental_recrawl_ttl_seconds):
             logger.info("url_duplicate_skipped", url=event.normalized_url)
             kafka_messages_total.labels(topic=URL_DISCOVERED, status="duplicate").inc()
             return
 
         domain = extract_domain(event.normalized_url)
+        before = time.perf_counter()
         await self.rate_limiter.acquire(domain)
+        if time.perf_counter() - before > 0.01:
+            rate_limit_waits_total.labels(domain=domain).inc()
 
         if not await self.robots.is_allowed(event.url):
             logger.info("robots_disallowed", url=event.normalized_url)
@@ -100,9 +114,16 @@ class CrawlerWorker:
                 duration_ms = (time.perf_counter() - start) * 1000
                 crawl_duration_seconds.observe(duration_ms / 1000)
 
-                storage_key, checksum, size = self.storage.upload(
-                    str(event.job_id), h, html
-                )
+                storage_key, checksum, size = self.storage.upload(str(event.job_id), h, html)
+
+                stored_hash = await self.content_hashes.get_hash(event.normalized_url)
+                if stored_hash and stored_hash == checksum:
+                    await self.content_hashes.touch_last_crawled(event.normalized_url)
+                    urls_unchanged_total.inc()
+                    urls_crawled_total.labels(status="unchanged").inc()
+                    kafka_messages_total.labels(topic=URL_DISCOVERED, status="unchanged").inc()
+                    logger.info("url_unchanged", url=event.normalized_url)
+                    return
 
                 fetched = HtmlFetched(
                     event_id=event.event_id,
@@ -123,33 +144,43 @@ class CrawlerWorker:
                 await publish_event(self.producer, HTML_FETCHED, fetched)
                 urls_crawled_total.labels(status="success").inc()
                 kafka_messages_total.labels(topic=HTML_FETCHED, status="success").inc()
-                logger.info(
-                    "url_fetched",
-                    url=event.normalized_url,
-                    status=status,
-                    duration_ms=duration_ms,
-                )
+                logger.info("url_fetched", url=event.normalized_url, status=status, duration_ms=duration_ms)
 
                 await self._enqueue_discovered_links(event, html)
 
             except Exception as exc:
                 urls_crawled_total.labels(status="error").inc()
+                urls_failed_total.labels(stage="crawler").inc()
                 kafka_messages_total.labels(topic=URL_DISCOVERED, status="error").inc()
-                decision = self.retry_strategy.decide(event.attempt, str(exc))
-                if decision.should_retry:
-                    failed = UrlFailed(
-                        job_id=event.job_id,
-                        url=event.url,
-                        normalized_url=event.normalized_url,
-                        attempt=event.attempt + 1,
-                        error=str(exc),
-                        stage="crawler",
-                    )
-                    await publish_event(self.producer, URL_FAILED, failed)
-                else:
-                    await publish_dlq(self.producer, event.model_dump(mode="json"), str(exc))
-                logger.error("crawl_failed", url=event.normalized_url, error=str(exc))
+                self.proxy_rotator.next_proxy()
+                await self._publish_failure(self.producer, event, str(exc), stage="crawler")
 
+    async def _publish_failure(
+        self,
+        producer: AIOKafkaProducer,
+        event: UrlDiscovered,
+        error: str,
+        stage: str,
+    ) -> None:
+        decision = self.retry_strategy.decide(event.attempt, error)
+        if decision.should_retry:
+            failed = UrlFailed(
+                job_id=event.job_id,
+                url=event.url,
+                normalized_url=event.normalized_url,
+                attempt=event.attempt,
+                error=error,
+                stage=stage,
+                depth=event.depth,
+                max_depth=event.max_depth,
+                allowed_domains=event.allowed_domains,
+                force_recrawl=event.force_recrawl,
+                trace_id=event.trace_id,
+            )
+            await publish_event(producer, URL_FAILED, failed)
+        else:
+            await publish_dlq(producer, event.model_dump(mode="json"), error)
+        logger.error("crawl_failed", url=event.normalized_url, error=error)
     async def _fetch(self, url: str) -> tuple[bytes, int]:
         assert self._browser is not None
         proxy = self.proxy_rotator.next_proxy()
@@ -179,7 +210,7 @@ class CrawlerWorker:
         data = extract_page_data(html, event.url)
         links = filter_links_by_domain(data["extracted_links"], event.allowed_domains)
 
-        for link in links[:50]:  # cap fan-out per page
+        for link in links[:50]:
             normalized = normalize_url(link)
             lh = url_hash(normalized)
             if not await self.dedup.mark_seen(str(event.job_id), lh):

@@ -37,6 +37,19 @@ class Settings(BaseSettings):
     crawler_concurrency: int = 10
     crawler_timeout_seconds: int = 30
     crawler_user_agent: str = "ArgusBot/0.1 (+https://github.com/argus)"
+    crawler_proxy_urls: str = ""
+
+    # Rate limiting
+    rate_limit_tokens_per_second: float = 1.0
+    rate_limit_burst: int = 5
+
+    # Retry
+    retry_max_attempts: int = 5
+    retry_base_delay_seconds: float = 1.0
+
+    # Incremental crawl
+    incremental_recrawl_ttl_seconds: int = 3600
+    dlq_max_replays: int = 3
 
     # API
     api_host: str = "0.0.0.0"

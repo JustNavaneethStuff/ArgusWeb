@@ -15,6 +15,13 @@ x-common-env: &common-env
   CRAWLER_CONCURRENCY: "10"
   CRAWLER_TIMEOUT_SECONDS: "30"
   CRAWLER_USER_AGENT: "ArgusBot/0.1 (+https://github.com/argus)"
+  CRAWLER_PROXY_URLS: ""
+  RATE_LIMIT_TOKENS_PER_SECOND: "1.0"
+  RATE_LIMIT_BURST: "5"
+  RETRY_MAX_ATTEMPTS: "5"
+  RETRY_BASE_DELAY_SECONDS: "1.0"
+  INCREMENTAL_RECRAWL_TTL_SECONDS: "3600"
+  DLQ_MAX_REPLAYS: "3"
 
 services:
   postgres:
@@ -185,15 +192,21 @@ services:
       context: .
       dockerfile: Dockerfile
       target: crawler
+    # Scale: docker compose up --scale crawler=3
     environment:
       <<: *common-env
       OTEL_SERVICE_NAME: argus-crawler
+      DATABASE_URL: postgresql+asyncpg://argus:argus@postgres:5432/argus
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
       minio-init:
+        condition: service_completed_successfully
+      migrate:
         condition: service_completed_successfully
 
   parser:
@@ -201,6 +214,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: parser
+    # Scale: docker compose up --scale parser=2
     environment:
       <<: *common-env
       OTEL_SERVICE_NAME: argus-parser
@@ -215,6 +229,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: cleaner
+    # Scale: docker compose up --scale cleaner=2
     environment:
       <<: *common-env
       OTEL_SERVICE_NAME: argus-cleaner
@@ -225,6 +240,32 @@ services:
       kafka-init:
         condition: service_completed_successfully
       migrate:
+        condition: service_completed_successfully
+
+  retry:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: retry
+    environment:
+      <<: *common-env
+      OTEL_SERVICE_NAME: argus-retry
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+  dlq-replay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dlq_replay
+    environment:
+      <<: *common-env
+      OTEL_SERVICE_NAME: argus-dlq-replay
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka-init:
         condition: service_completed_successfully
 
   api:

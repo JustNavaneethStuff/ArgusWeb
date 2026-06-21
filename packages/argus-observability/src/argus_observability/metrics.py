@@ -23,3 +23,32 @@ kafka_messages_total = Counter(
     "Total Kafka messages processed",
     ["topic", "status"],
 )
+
+rate_limit_waits_total = Counter(
+    "argus_rate_limit_waits_total",
+    "Total rate limit wait cycles",
+    ["domain"],
+)
+
+urls_unchanged_total = Counter(
+    "argus_urls_unchanged_total",
+    "URLs skipped because content hash unchanged",
+)
+
+retry_attempts_total = Counter(
+    "argus_retry_attempts_total",
+    "Total retry attempts processed",
+    ["stage", "result"],
+)
+
+dlq_replays_total = Counter(
+    "argus_dlq_replays_total",
+    "Total DLQ replay attempts",
+    ["result"],
+)
+
+urls_failed_total = Counter(
+    "argus_urls_failed_total",
+    "Total URL failures by stage",
+    ["stage"],
+)

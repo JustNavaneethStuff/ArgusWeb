@@ -24,6 +24,7 @@ class UrlDiscovered(EventBase):
     depth: int = 0
     max_depth: int = 1
     allowed_domains: list[str] = Field(default_factory=list)
+    force_recrawl: bool = False
 
 
 class HtmlFetched(EventBase):
@@ -56,3 +57,11 @@ class UrlFailed(EventBase):
     TOPIC: ClassVar[str] = "argus.url.failed"
     error: str
     stage: str = "crawler"
+    depth: int = 0
+    max_depth: int = 1
+    allowed_domains: list[str] = Field(default_factory=list)
+    force_recrawl: bool = False
+    # cleaner stage replay
+    storage_key: str | None = None
+    checksum: str | None = None
+    page_payload: dict | None = None

@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from argus_core.content_hash import ContentHashStore
 from argus_core.database import create_session_factory
+from argus_core.factories import build_retry_strategy
 from argus_core.models import HtmlArtifact, Page, Url, UrlStatus
+from argus_core.redis_client import create_redis
 from argus_core.settings import get_settings
 from argus_core.url_utils import extract_domain
 from argus_events.kafka_client import (
@@ -14,13 +18,14 @@ from argus_events.kafka_client import (
     create_producer,
     deserialize_event,
     publish_dlq,
+    publish_event,
 )
-from argus_events.schemas import PageParsed
-from argus_events.topics import PAGE_PARSED
+from argus_events.schemas import PageParsed, UrlFailed
+from argus_events.topics import PAGE_PARSED, URL_FAILED
 from argus_observability.logging import configure_logging, get_logger
-from argus_observability.metrics import kafka_messages_total
-from argus_observability.worker_metrics import start_metrics_server
+from argus_observability.metrics import kafka_messages_total, urls_failed_total
 from argus_observability.tracing import configure_tracing, get_tracer
+from argus_observability.worker_metrics import start_metrics_server
 
 logger = get_logger(__name__)
 
@@ -45,6 +50,7 @@ def _dedupe_links(links: list[str]) -> list[str]:
 class CleanerWorker:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.retry_strategy = build_retry_strategy(self.settings)
         self._tracer = get_tracer("argus.cleaner")
 
     async def start(self) -> None:
@@ -53,6 +59,8 @@ class CleanerWorker:
         start_metrics_server(9091)
 
         self.session_factory = create_session_factory(self.settings)
+        self.redis = await create_redis(self.settings)
+        self.content_hashes = ContentHashStore(self.session_factory, self.redis)
         self.producer = await create_producer(self.settings.kafka_bootstrap_servers)
         self.consumer = await create_consumer(
             self.settings.kafka_bootstrap_servers,
@@ -68,6 +76,7 @@ class CleanerWorker:
         finally:
             await self.consumer.stop()
             await self.producer.stop()
+            await self.redis.aclose()
 
     async def _handle(self, event: PageParsed) -> None:
         with self._tracer.start_as_current_span("cleaner.upsert") as span:
@@ -79,14 +88,34 @@ class CleanerWorker:
                     await self._upsert_page(session, url_id, event)
                     await session.commit()
 
+                await self.content_hashes.set_hash(event.normalized_url, event.checksum)
                 kafka_messages_total.labels(topic=PAGE_PARSED, status="success").inc()
                 logger.info("page_cleaned", url=event.normalized_url)
             except Exception as exc:
+                urls_failed_total.labels(stage="cleaner").inc()
                 kafka_messages_total.labels(topic=PAGE_PARSED, status="error").inc()
-                await publish_dlq(self.producer, event.model_dump(mode="json"), str(exc))
+                decision = self.retry_strategy.decide(event.attempt, str(exc))
+                if decision.should_retry:
+                    failed = UrlFailed(
+                        job_id=event.job_id,
+                        url=event.url,
+                        normalized_url=event.normalized_url,
+                        attempt=event.attempt,
+                        error=str(exc),
+                        stage="cleaner",
+                        depth=event.depth,
+                        storage_key=event.storage_key,
+                        checksum=event.checksum,
+                        page_payload=event.model_dump(mode="json"),
+                        trace_id=event.trace_id,
+                    )
+                    await publish_event(self.producer, URL_FAILED, failed)
+                else:
+                    await publish_dlq(self.producer, event.model_dump(mode="json"), str(exc))
                 logger.error("clean_failed", url=event.normalized_url, error=str(exc))
 
     async def _upsert_url(self, session, event: PageParsed) -> uuid.UUID:
+        now = datetime.now(UTC)
         result = await session.execute(
             select(Url).where(Url.normalized_url == event.normalized_url)
         )
@@ -94,6 +123,7 @@ class CleanerWorker:
         if existing:
             existing.status = UrlStatus.parsed
             existing.content_hash = event.checksum
+            existing.last_crawled_at = now
             return existing.id
 
         url = Url(
@@ -104,6 +134,7 @@ class CleanerWorker:
             status=UrlStatus.parsed,
             content_hash=event.checksum,
             depth=event.depth,
+            last_crawled_at=now,
         )
         session.add(url)
         await session.flush()

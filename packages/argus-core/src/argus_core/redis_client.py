@@ -34,3 +34,7 @@ class UrlDedupStore:
     async def mark_seen(self, job_id: str, url_hash: str) -> bool:
         """Track URL in job-specific set. Returns True if newly added."""
         return bool(await self._redis.sadd(f"argus:seen:{job_id}", url_hash))
+
+    async def release(self, url_hash: str) -> None:
+        """Release global dedup claim to allow recrawl."""
+        await self._redis.delete(self._key(url_hash))

@@ -17,7 +17,7 @@ COPY alembic.ini ./
 RUN uv sync --all-packages
 
 ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app/packages/argus-core/src:/app/packages/argus-events/src:/app/packages/argus-observability/src:/app/services/scheduler/src:/app/services/crawler/src:/app/services/parser/src:/app/services/cleaner/src:/app/services/api/src"
+ENV PYTHONPATH="/app/packages/argus-core/src:/app/packages/argus-events/src:/app/packages/argus-observability/src:/app/services/scheduler/src:/app/services/crawler/src:/app/services/parser/src:/app/services/cleaner/src:/app/services/api/src:/app/services/retry/src:/app/services/dlq_replay/src"
 
 FROM base AS scheduler
 CMD ["python", "-m", "scheduler.main"]
@@ -39,3 +39,9 @@ CMD ["python", "-m", "cleaner.main"]
 
 FROM base AS api
 CMD ["python", "-m", "api.main"]
+
+FROM base AS retry
+CMD ["python", "-m", "retry.main"]
+
+FROM base AS dlq_replay
+CMD ["python", "-m", "dlq_replay.main"]

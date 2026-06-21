@@ -65,6 +65,66 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 5,
+      "title": "Rate Limit Waits",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(argus_rate_limit_waits_total[5m])) by (domain)",
+          "legendFormat": "{{domain}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 6,
+      "title": "Retry Attempts",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(argus_retry_attempts_total[5m])) by (stage, result)",
+          "legendFormat": "{{stage}} {{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "id": 7,
+      "title": "Unchanged URLs Skipped",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(argus_urls_unchanged_total[5m]))",
+          "legendFormat": "unchanged",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "id": 8,
+      "title": "Failures by Stage",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(argus_urls_failed_total[5m])) by (stage)",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "refresh": "10s",
@@ -74,5 +134,5 @@
   "time": {"from": "now-1h", "to": "now"},
   "title": "Argus Crawler Overview",
   "uid": "argus-overview",
-  "version": 1
+  "version": 2
 }

@@ -27,6 +27,8 @@ members = [
     "services/parser",
     "services/cleaner",
     "services/api",
+    "services/retry",
+    "services/dlq_replay",
 ]
 
 [tool.pytest.ini_options]

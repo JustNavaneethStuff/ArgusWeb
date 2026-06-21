@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from argus_core.factories import build_retry_strategy
 from argus_core.parser import extract_page_data
 from argus_core.settings import get_settings
 from argus_core.storage import HtmlStorage, create_minio_client
@@ -12,12 +13,12 @@ from argus_events.kafka_client import (
     publish_event,
     publish_dlq,
 )
-from argus_events.schemas import HtmlFetched, PageParsed
-from argus_events.topics import HTML_FETCHED, PAGE_PARSED
+from argus_events.schemas import HtmlFetched, PageParsed, UrlFailed
+from argus_events.topics import HTML_FETCHED, PAGE_PARSED, URL_FAILED
 from argus_observability.logging import configure_logging, get_logger
-from argus_observability.metrics import kafka_messages_total, parser_errors_total
-from argus_observability.worker_metrics import start_metrics_server
+from argus_observability.metrics import kafka_messages_total, parser_errors_total, urls_failed_total
 from argus_observability.tracing import configure_tracing, get_tracer
+from argus_observability.worker_metrics import start_metrics_server
 
 logger = get_logger(__name__)
 
@@ -25,6 +26,7 @@ logger = get_logger(__name__)
 class ParserWorker:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.retry_strategy = build_retry_strategy(self.settings)
         self._tracer = get_tracer("argus.parser")
 
     async def start(self) -> None:
@@ -78,8 +80,25 @@ class ParserWorker:
                 logger.info("page_parsed", url=event.normalized_url, title=data["title"])
             except Exception as exc:
                 parser_errors_total.labels(error_type=type(exc).__name__).inc()
+                urls_failed_total.labels(stage="parser").inc()
                 kafka_messages_total.labels(topic=HTML_FETCHED, status="error").inc()
-                await publish_dlq(self.producer, event.model_dump(mode="json"), str(exc))
+                decision = self.retry_strategy.decide(event.attempt, str(exc))
+                if decision.should_retry:
+                    failed = UrlFailed(
+                        job_id=event.job_id,
+                        url=event.url,
+                        normalized_url=event.normalized_url,
+                        attempt=event.attempt,
+                        error=str(exc),
+                        stage="parser",
+                        depth=event.depth,
+                        max_depth=event.max_depth,
+                        allowed_domains=event.allowed_domains,
+                        trace_id=event.trace_id,
+                    )
+                    await publish_event(self.producer, URL_FAILED, failed)
+                else:
+                    await publish_dlq(self.producer, event.model_dump(mode="json"), str(exc))
                 logger.error("parse_failed", url=event.normalized_url, error=str(exc))
 
 
