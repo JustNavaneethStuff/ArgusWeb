@@ -12,6 +12,7 @@ dependencies = [
     "minio>=7.2",
     "beautifulsoup4>=4.12",
     "lxml>=5.1",
+    "apscheduler>=3.10",
 ]
 
 [build-system]

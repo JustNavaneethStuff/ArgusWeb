@@ -12,6 +12,7 @@ dependencies = [
     "asyncpg>=0.29",
     "aiokafka>=0.10",
     "redis[hiredis]>=5.0",
+    "apscheduler>=3.10",
 ]
 
 [tool.uv.sources]

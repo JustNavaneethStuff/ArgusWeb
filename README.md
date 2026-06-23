@@ -75,8 +75,61 @@ frontend/dashboard           React product UI
 ## Phases
 
 - **Phase 1**: Async crawl pipeline, robots.txt, dedup, HTML storage, metadata extraction
-- **Phase 2** (current): Rate limiting, proxies, retry/DLQ replay, incremental crawl
-- **Phase 3**: Search API, cron scheduling, full dashboard, alerting
+- **Phase 2**: Rate limiting, proxies, retry/DLQ replay, incremental crawl
+- **Phase 3** (current): Search API, cron scheduling, full dashboard, alerting
+
+## Phase 3 Features
+
+### Search API
+
+Full-text search over indexed pages using PostgreSQL pg_trgm:
+
+```bash
+curl "http://localhost:8000/search?q=example&limit=10"
+```
+
+### Job management
+
+```bash
+# List jobs
+curl http://localhost:8000/jobs
+
+# Job detail with progress
+curl http://localhost:8000/jobs/{job_id}
+```
+
+### Cron scheduling
+
+```bash
+curl -X POST http://localhost:8001/schedules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "daily-example",
+    "cron_expression": "0 0 * * *",
+    "job_config": {"seed_urls": ["https://example.com"], "max_depth": 1}
+  }'
+
+# List schedules
+curl http://localhost:8000/schedules
+```
+
+### Dashboard
+
+The React dashboard at http://localhost:5173 provides:
+- Search with ranked results
+- Job submission and listing
+- Cron schedule management
+- Enhanced statistics with domain breakdown
+
+### Alerting
+
+Grafana unified alerting is provisioned with rules for:
+- High crawl error rate
+- Parser error spikes
+- DLQ backlog
+- Service down
+
+View alerts in Grafana at http://localhost:3000/alerting
 
 ## Phase 2 Features
 

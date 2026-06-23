@@ -1,0 +1,143 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Argus Alerts
+    folder: Argus
+    interval: 1m
+    rules:
+      - uid: argus-high-crawl-errors
+        title: HighCrawlErrorRate
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: sum(rate(argus_urls_crawled_total{status="error"}[5m]))
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.1]
+                  operator:
+                    type: and
+                  reducer:
+                    type: last
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Crawl error rate is elevated
+
+      - uid: argus-parser-errors
+        title: ParserErrorsSpike
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: sum(rate(argus_parser_errors_total[5m]))
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.05]
+                  operator:
+                    type: and
+                  reducer:
+                    type: last
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Parser error rate spike detected
+
+      - uid: argus-retry-dlq
+        title: RetryDLQBacklog
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: sum(rate(argus_retry_attempts_total{result="dlq"}[5m]))
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+                  operator:
+                    type: and
+                  reducer:
+                    type: last
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Messages are being sent to DLQ
+
+      - uid: argus-service-down
+        title: ServiceDown
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: up{job=~"argus-.*"}
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+                  operator:
+                    type: and
+                  reducer:
+                    type: last
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: An Argus service is down

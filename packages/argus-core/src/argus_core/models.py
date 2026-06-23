@@ -35,6 +35,7 @@ class CrawlJob(Base):
     max_depth: Mapped[int] = mapped_column(Integer, default=1)
     allowed_domains: Mapped[list] = mapped_column(JSONB, nullable=False)
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.pending)
+    urls_queued: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -86,7 +87,20 @@ class Page(Base):
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     text_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
     extracted_links: Mapped[list] = mapped_column(JSONB, default=list)
-    metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
+    page_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     url: Mapped["Url"] = relationship(back_populates="page")
+
+
+class ScheduledCrawlJob(Base):
+    __tablename__ = "scheduled_crawl_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    cron_expression: Mapped[str] = mapped_column(String(64), nullable=False)
+    job_config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -171,7 +171,7 @@ class CleanerWorker:
             existing.language = event.language
             existing.text_snippet = snippet
             existing.extracted_links = links
-            existing.metadata = event.metadata
+            existing.page_metadata = event.metadata
             return
 
         session.add(
@@ -182,7 +182,7 @@ class CleanerWorker:
                 language=event.language,
                 text_snippet=snippet,
                 extracted_links=links,
-                metadata=event.metadata,
+                page_metadata=event.metadata,
             )
         )
 

@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     incremental_recrawl_ttl_seconds: int = 3600
     dlq_max_replays: int = 3
 
+    # Search
+    search_similarity_threshold: float = 0.1
+    search_default_limit: int = 20
+    search_max_limit: int = 100
+
     # API
     api_host: str = "0.0.0.0"
     api_port: int = 8000

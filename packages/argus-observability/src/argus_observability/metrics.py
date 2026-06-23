@@ -52,3 +52,15 @@ urls_failed_total = Counter(
     "Total URL failures by stage",
     ["stage"],
 )
+
+search_queries_total = Counter(
+    "argus_search_queries_total",
+    "Total search queries",
+    ["status"],
+)
+
+search_duration_seconds = Histogram(
+    "argus_search_duration_seconds",
+    "Search query duration",
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
