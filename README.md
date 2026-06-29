@@ -76,7 +76,38 @@ frontend/dashboard           React product UI
 
 - **Phase 1**: Async crawl pipeline, robots.txt, dedup, HTML storage, metadata extraction
 - **Phase 2**: Rate limiting, proxies, retry/DLQ replay, incremental crawl
-- **Phase 3** (current): Search API, cron scheduling, full dashboard, alerting
+- **Phase 3**: Search API, cron scheduling, full dashboard, alerting
+- **Production Platform** (current): Clean Architecture, at-least-once Kafka, idempotent processing, per-job URL accounting, typed extraction engine
+
+## Production Platform
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture guide.
+
+### Key improvements
+
+- **Clean Architecture** — `domain/`, `application/`, `ports/`, `infrastructure/` in `argus-core`
+- **Kafka delivery** — Manual commit after handler success; bounded in-flight consumption
+- **Idempotency** — `processed_events` table for exactly-once side effects
+- **Job accounting** — `crawl_job_urls` per-job progress tracking
+- **Extraction engine** — Typed HTML/JSON extractors with Pydantic validation
+- **Observability** — Trace propagation via Kafka headers
+
+### Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | System overview and layers |
+| [Kafka Event Flow](docs/KAFKA_EVENT_FLOW.md) | Topics, sequences, delivery semantics |
+| [Database ER](docs/DATABASE_ER.md) | Schema and indexes |
+| [Interview: Crawl Engine](docs/interview/CRAWL_ENGINE.md) | Design decisions and tradeoffs |
+| [Interview: Kafka](docs/interview/KAFKA_PIPELINE.md) | Event-driven architecture deep dive |
+| [Interview: Data Model](docs/interview/DATA_MODEL.md) | PostgreSQL design rationale |
+
+### Benchmarks
+
+```bash
+uv run python scripts/benchmark.py
+```
 
 ## Phase 3 Features
 

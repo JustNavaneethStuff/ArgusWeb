@@ -5,7 +5,12 @@ import json
 
 from argus_core.redis_client import create_redis
 from argus_core.settings import get_settings
-from argus_events.kafka_client import create_consumer, create_producer, publish_event
+from argus_events.kafka_client import (
+    consume_with_backpressure,
+    create_consumer,
+    create_producer,
+    publish_event,
+)
 from argus_events.schemas import PageParsed, UrlDiscovered
 from argus_events.topics import DLQ, PAGE_PARSED, URL_DISCOVERED
 from argus_observability.logging import configure_logging, get_logger
@@ -33,12 +38,16 @@ class DlqReplayConsumer:
             self.settings.kafka_bootstrap_servers,
             "argus-dlq-replay",
             [DLQ],
+            enable_auto_commit=False,
         )
 
         logger.info("dlq_replay_started")
         try:
-            async for message in self.consumer:
-                await self._handle(message.value)
+            await consume_with_backpressure(
+                self.consumer,
+                lambda msg: self._handle(msg.value),
+                max_in_flight=self.settings.kafka_max_in_flight,
+            )
         finally:
             await self.consumer.stop()
             await self.producer.stop()

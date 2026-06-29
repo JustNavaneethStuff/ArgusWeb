@@ -15,12 +15,15 @@ class Settings(BaseSettings):
     postgres_password: str = "argus"
     postgres_db: str = "argus"
     database_url: str | None = None
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
     # Kafka
     kafka_bootstrap_servers: str = "localhost:9092"
+    kafka_max_in_flight: int = 10
 
     # MinIO
     minio_endpoint: str = "localhost:9000"

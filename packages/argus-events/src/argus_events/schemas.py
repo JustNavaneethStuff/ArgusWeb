@@ -13,6 +13,7 @@ class EventBase(BaseModel):
     job_id: UUID
     url: str
     normalized_url: str
+    schema_version: int = 1
     attempt: int = 1
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

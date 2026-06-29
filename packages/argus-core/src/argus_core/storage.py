@@ -30,6 +30,10 @@ class HtmlStorage:
     def storage_key(self, job_id: str, url_hash: str) -> str:
         return f"{job_id}/{url_hash}.html"
 
+    @staticmethod
+    def compute_checksum(html: bytes) -> str:
+        return hashlib.sha256(html).hexdigest()
+
     def upload(self, job_id: str, url_hash: str, html: bytes) -> tuple[str, str, int]:
         self.ensure_bucket()
         key = self.storage_key(job_id, url_hash)

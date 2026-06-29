@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from argus_core.database import check_postgres, create_session_factory
+from argus_core.database import DatabaseManager, check_postgres
+from argus_core.infrastructure.composition import build_worker_dependencies
 from argus_core.jobs import compute_job_progress, list_jobs
 from argus_core.models import CrawlJob, JobStatus, ScheduledCrawlJob, Url
 from argus_core.redis_client import UrlDedupStore, create_redis
@@ -67,7 +68,10 @@ async def submit_job_internal(
     dedup: UrlDedupStore,
     producer: AIOKafkaProducer,
     request: JobRequest,
+    crawl_progress=None,
 ) -> JobResponse:
+    if crawl_progress is None:
+        crawl_progress = build_worker_dependencies().crawl_progress
     allowed_domains = request.allowed_domains or [
         extract_domain(url) for url in request.seed_urls
     ]
@@ -90,7 +94,7 @@ async def submit_job_internal(
     if request.incremental:
         queued = await _queue_incremental_urls(
             session_factory, dedup, producer, job, allowed_domains,
-            request.recrawl_stale_hours, request.max_depth,
+            request.recrawl_stale_hours, request.max_depth, crawl_progress,
         )
     else:
         for seed in request.seed_urls:
@@ -98,6 +102,9 @@ async def submit_job_internal(
             h = url_hash(normalized)
             if not await dedup.mark_seen(str(job.id), h):
                 continue
+            async with session_factory() as session:
+                await crawl_progress.queue_url(session, job.id, normalized, depth=0)
+                await session.commit()
             event = UrlDiscovered(
                 job_id=job.id,
                 url=seed,
@@ -128,7 +135,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_tracing(settings.otel_service_name, settings.otel_exporter_otlp_endpoint)
 
     app.state.settings = settings
-    app.state.session_factory = create_session_factory(settings)
+    app.state.db = DatabaseManager(settings)
+    app.state.session_factory = app.state.db.session_factory
+    app.state.deps = build_worker_dependencies(settings)
     app.state.redis = await create_redis(settings)
     app.state.dedup = UrlDedupStore(app.state.redis)
     app.state.producer = await create_producer(settings.kafka_bootstrap_servers)
@@ -140,6 +149,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             app.state.dedup,
             app.state.producer,
             req,
+            app.state.deps.crawl_progress,
         )
 
     scheduler = APSchedulerJobScheduler(app.state.session_factory, cron_callback)
@@ -153,6 +163,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler.shutdown()
     await app.state.producer.stop()
     await app.state.redis.aclose()
+    await app.state.db.dispose()
     logger.info("scheduler_stopped")
 
 
@@ -169,7 +180,7 @@ async def health() -> dict:
 async def readiness() -> dict:
     checks: dict[str, str] = {}
     try:
-        await check_postgres(app.state.settings)
+        await check_postgres(app.state.settings, app.state.db)
         checks["postgres"] = "ok"
     except Exception as exc:
         checks["postgres"] = f"error: {exc}"
@@ -196,6 +207,7 @@ async def _queue_incremental_urls(
     allowed_domains: list[str],
     stale_hours: int,
     max_depth: int,
+    crawl_progress,
 ) -> int:
     cutoff = datetime.now(UTC) - timedelta(hours=stale_hours)
     queued = 0
@@ -213,6 +225,11 @@ async def _queue_incremental_urls(
         h = url_hash(url_row.normalized_url)
         if not await dedup.mark_seen(str(job.id), h):
             continue
+        async with session_factory() as session:
+            await crawl_progress.queue_url(
+                session, job.id, url_row.normalized_url, url_row.depth
+            )
+            await session.commit()
         event = UrlDiscovered(
             job_id=job.id,
             url=url_row.canonical_url,
@@ -236,6 +253,7 @@ async def create_job(request: JobRequest) -> JobResponse:
         app.state.dedup,
         app.state.producer,
         request,
+        app.state.deps.crawl_progress,
     )
 
 

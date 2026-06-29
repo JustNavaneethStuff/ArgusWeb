@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from argus_core.database import check_postgres, create_session_factory
+from argus_core.database import DatabaseManager, check_postgres
 from argus_core.jobs import compute_job_progress, get_expanded_stats, list_jobs
 from argus_core.models import ScheduledCrawlJob
 from argus_core.redis_client import create_redis
@@ -51,7 +51,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_tracing(settings.otel_service_name, settings.otel_exporter_otlp_endpoint)
 
     app.state.settings = settings
-    app.state.session_factory = create_session_factory(settings)
+    app.state.db = DatabaseManager(settings)
+    app.state.session_factory = app.state.db.session_factory
     app.state.redis = await create_redis(settings)
     app.state.producer = await create_producer(settings.kafka_bootstrap_servers)
 
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await app.state.producer.stop()
     await app.state.redis.aclose()
+    await app.state.db.dispose()
     logger.info("api_stopped")
 
 
@@ -76,7 +78,7 @@ async def health() -> dict:
 async def readiness() -> dict:
     checks: dict[str, str] = {}
     try:
-        await check_postgres(app.state.settings)
+        await check_postgres(app.state.settings, app.state.db)
         checks["postgres"] = "ok"
     except Exception as exc:
         checks["postgres"] = f"error: {exc}"
