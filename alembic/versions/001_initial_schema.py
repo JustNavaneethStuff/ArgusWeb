@@ -20,8 +20,12 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
 
-    job_status = sa.Enum("pending", "running", "completed", "failed", name="jobstatus")
-    url_status = sa.Enum("pending", "fetched", "parsed", "failed", name="urlstatus")
+    job_status = postgresql.ENUM(
+        "pending", "running", "completed", "failed", name="jobstatus", create_type=False
+    )
+    url_status = postgresql.ENUM(
+        "pending", "fetched", "parsed", "failed", name="urlstatus", create_type=False
+    )
     job_status.create(op.get_bind(), checkfirst=True)
     url_status.create(op.get_bind(), checkfirst=True)
 
